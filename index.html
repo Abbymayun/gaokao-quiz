@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>高考基础刷题</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- 首页 -->
+  <div id="page-home" class="page active">
+    <header class="app-header">
+      <h1>📚 高考基础刷题</h1>
+      <p class="subtitle">零基础 · 20天速成 · 只抓基础分</p>
+    </header>
+    <div class="stats-overview" id="stats-overview"></div>
+    <div class="plan-section">
+      <div class="plan-header">📋 20天刷题计划 <span class="plan-header-sub">每天集中一科，效率翻倍</span></div>
+      <div class="plan-timeline" id="study-plan"></div>
+    </div>
+    <div class="section-divider">
+      <span>选择科目开始刷题</span>
+    </div>
+    <div class="subject-grid" id="subject-grid"></div>
+    <footer class="app-footer">
+      <p>数据保存在本地，刷新不丢失</p>
+    </footer>
+  </div>
+
+  <!-- 科目详情页 -->
+  <div id="page-subject" class="page">
+    <header class="app-header">
+      <button class="btn-back" onclick="App.goBack()">← 返回</button>
+      <h2 id="subject-title"></h2>
+    </header>
+    <div class="subject-stats" id="subject-stats"></div>
+    <div class="subject-action-bar">
+      <button class="btn btn-reset-quiz" id="btn-reset-quiz" onclick="App.resetQuiz()">🔄 重新刷题</button>
+    </div>
+    <div class="mode-cards">
+      <div class="mode-card" onclick="App.startQuiz()">
+        <div class="mode-icon">✏️</div>
+        <h3>刷题模式</h3>
+        <p>随机抽题，即时反馈</p>
+      </div>
+      <div class="mode-card" onclick="App.startMemorize()">
+        <div class="mode-icon">📖</div>
+        <h3>背题模式</h3>
+        <p>直接看题+答案，快速记忆</p>
+      </div>
+      <div class="mode-card" onclick="App.startWrongBook()">
+        <div class="mode-icon">📝</div>
+        <h3>错题本</h3>
+        <span id="wrong-count-badge" class="badge">0</span>
+        <p>回顾错题，攻克薄弱点</p>
+      </div>
+      <div class="mode-card" onclick="App.showStats()">
+        <div class="mode-icon">📊</div>
+        <h3>学习数据</h3>
+        <p>查看刷题统计</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 刷题模式 -->
+  <div id="page-quiz" class="page">
+    <header class="app-header">
+      <button class="btn-back" onclick="App.endQuiz()">← 返回</button>
+      <h2>刷题模式</h2>
+      <span id="quiz-progress" class="progress-badge"></span>
+    </header>
+    <div id="quiz-area"></div>
+    <div class="quiz-nav">
+      <button id="quiz-prev" class="btn btn-secondary" onclick="App.quizPrev()" disabled>上一题</button>
+      <button id="quiz-next" class="btn btn-primary" onclick="App.quizNext()">下一题</button>
+    </div>
+  </div>
+
+  <!-- 背题模式 -->
+  <div id="page-memorize" class="page">
+    <header class="app-header">
+      <button class="btn-back" onclick="App.endMemorize()">← 返回</button>
+      <h2>📖 背题模式</h2>
+      <div class="memorize-controls">
+        <button class="btn btn-small" id="btn-memo-all" onclick="App.setMemoScope('all')">全科随机</button>
+        <button class="btn btn-small active" id="btn-memo-subject" onclick="App.setMemoScope('subject')">当前科目</button>
+      </div>
+    </header>
+    <div id="memo-area"></div>
+    <div class="quiz-nav">
+      <button class="btn btn-secondary" onclick="App.memoPrev()">上一题</button>
+      <button class="btn btn-primary" onclick="App.memoNext()">下一题</button>
+    </div>
+  </div>
+
+  <!-- 错题本 -->
+  <div id="page-wrong" class="page">
+    <header class="app-header">
+      <button class="btn-back" onclick="App.goBack()">← 返回</button>
+      <h2>📝 错题本</h2>
+      <button class="btn btn-small btn-danger" onclick="App.clearWrongBook()">清空</button>
+    </header>
+    <div id="wrong-area"></div>
+  </div>
+
+  <!-- 统计页 -->
+  <div id="page-stats" class="page">
+    <header class="app-header">
+      <button class="btn-back" onclick="App.goBack()">← 返回</button>
+      <h2>📊 学习数据</h2>
+    </header>
+    <div id="stats-area"></div>
+  </div>
+</div>
+
+<!-- Toast 提示 -->
+<div id="toast" class="toast hidden"></div>
+
+<!-- 确认弹窗 -->
+<div id="confirm-modal" class="modal hidden">
+  <div class="modal-content">
+    <p id="confirm-text"></p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="App.confirmCancel()">取消</button>
+      <button class="btn btn-danger" id="confirm-ok" onclick="App.confirmOk()">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/chinese.js"></script>
+<script src="js/math.js"></script>
+<script src="js/english.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/chemistry.js"></script>
+<script src="js/politics.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
