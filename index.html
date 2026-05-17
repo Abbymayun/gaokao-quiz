@@ -15,6 +15,10 @@
       <h1>📚 高考基础刷题</h1>
       <p class="subtitle">零基础 · 20天速成 · 只抓基础分</p>
     </header>
+
+    <!-- 每日记忆入口 -->
+    <div id="daily-entrance" class="daily-entrance"></div>
+
     <div class="stats-overview" id="stats-overview"></div>
     <div class="plan-section">
       <div class="plan-header">📋 20天刷题计划 <span class="plan-header-sub">每天集中一科，效率翻倍</span></div>
@@ -61,6 +65,21 @@
         <h3>学习数据</h3>
         <p>查看刷题统计</p>
       </div>
+    </div>
+  </div>
+
+  <!-- 每日记忆模式 -->
+  <div id="page-daily" class="page">
+    <header class="app-header">
+      <button class="btn-back" onclick="App.goBack()">← 返回</button>
+      <h2>🧠 每日记忆</h2>
+      <span id="daily-progress" class="progress-badge"></span>
+    </header>
+    <div class="daily-stats-bar" id="daily-stats"></div>
+    <div id="daily-area"></div>
+    <div class="quiz-nav">
+      <button id="daily-prev" class="btn btn-secondary" onclick="App.dailyPrev()" disabled>上一题</button>
+      <button id="daily-next" class="btn btn-primary" onclick="App.dailyNext()">下一题</button>
     </div>
   </div>
 

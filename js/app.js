@@ -16,6 +16,7 @@ const App = {
   currentPage: 'home',
   quiz: { questions: [], index: 0, answered: false, answeredMap: {} },
   memo: { questions: [], index: 0, scope: 'subject' },
+  daily: { questions: [], index: 0, answeredMap: {} },
   confirmCallback: null,
 
   // === 数据层 ===
@@ -53,6 +54,122 @@ const App = {
     this.saveSubjectData(subject, sd);
   },
 
+  // === 每日记忆模式 - 进度追踪 ===
+  getDailyData() {
+    try {
+      return JSON.parse(localStorage.getItem('gaokao_daily')) || { seenIds: {}, date: '', dailyQuota: 30, todaySubjects: {} };
+    } catch { return { seenIds: {}, date: '', dailyQuota: 30, todaySubjects: {} }; }
+  },
+
+  saveDailyData(data) {
+    localStorage.setItem('gaokao_daily', JSON.stringify(data));
+  },
+
+  getTodayStr() {
+    return new Date().toISOString().split('T')[0];
+  },
+
+  getDailyQuestions() {
+    const dd = this.getDailyData();
+    const today = this.getTodayStr();
+
+    // 如果是新的一天，重置今日进度
+    if (dd.date !== today) {
+      dd.date = today;
+      dd.todaySubjects = {};
+      dd.todayDone = 0;
+      this.saveDailyData(dd);
+    }
+
+    // 获取今天需要刷的科目（基于20天计划）
+    const studyDay = this.getStudyDay();
+    const PLAN_MAP = {
+      1: ['english'], 2: ['english'], 3: ['english'],
+      4: ['politics'], 5: ['politics'], 6: ['politics'],
+      7: ['chinese'], 8: ['chinese'], 9: ['chinese'], 10: ['chinese'],
+      11: ['math'], 12: ['math'], 13: ['math'], 14: ['math'],
+      15: ['physics'], 16: ['physics'], 17: ['physics'],
+      18: ['chemistry'], 19: ['chemistry'], 20: ['chemistry'],
+    };
+
+    // 超过20天进入复习轮：优先刷错题，然后按需分配
+    let todaySubjs;
+    if (studyDay > 20) {
+      // 复习轮：优先有错题的科目
+      todaySubjs = SUBJECT_KEYS.filter(k => {
+        const sd = this.getSubjectData(k);
+        return (sd.wrongIds || []).length > 0;
+      });
+      if (todaySubjs.length === 0) todaySubjs = SUBJECT_KEYS;
+    } else {
+      todaySubjs = PLAN_MAP[studyDay] || ['english'];
+    }
+
+    // 收集所有未做过的题目
+    let pool = [];
+    const seenIds = dd.seenIds || {};
+
+    todaySubjs.forEach(key => {
+      const bank = this.getQuestionBank(key);
+      bank.forEach(q => {
+        const qKey = key + '_' + q.id;
+        // 优先刷错题，然后是没见过的题
+        const sd = this.getSubjectData(key);
+        const isWrong = (sd.wrongIds || []).includes(q.id);
+        const seenCount = seenIds[qKey] || 0;
+        // 已做过3次以上的跳过（除非是错题）
+        if (seenCount >= 3 && !isWrong) return;
+        pool.push({ ...q, _subject: key, _qKey: qKey, _isWrong: isWrong, _seenCount: seenCount });
+      });
+    });
+
+    // 排序：错题优先，然后按见过的次数升序
+    pool.sort((a, b) => {
+      if (a._isWrong !== b._isWrong) return b._isWrong - a._isWrong;
+      return a._seenCount - b._seenCount;
+    });
+
+    // 取每日配额数量的题目
+    const quota = dd.dailyQuota || 30;
+    const selected = pool.slice(0, quota);
+
+    // 标记这些题目为已见
+    selected.forEach(q => {
+      if (!dd.seenIds) dd.seenIds = {};
+      dd.seenIds[q._qKey] = (dd.seenIds[q._qKey] || 0) + 1;
+    });
+    this.saveDailyData(dd);
+
+    return selected;
+  },
+
+  getDailyProgress() {
+    const dd = this.getDailyData();
+    const today = this.getTodayStr();
+    if (dd.date !== today) return { done: 0, correct: 0, total: 0 };
+    return {
+      done: dd.todayDone || 0,
+      correct: dd.todayCorrect || 0,
+      total: dd.dailyQuota || 30
+    };
+  },
+
+  recordDailyAnswer(q, isCorrect) {
+    const dd = this.getDailyData();
+    const today = this.getTodayStr();
+    if (dd.date !== today) {
+      dd.date = today;
+      dd.todaySubjects = {};
+      dd.todayDone = 0;
+      dd.todayCorrect = 0;
+    }
+    dd.todayDone = (dd.todayDone || 0) + 1;
+    if (isCorrect) dd.todayCorrect = (dd.todayCorrect || 0) + 1;
+    this.saveDailyData(dd);
+    // 同时记录到对应科目数据
+    this.recordAnswer(q._subject, q.id, isCorrect);
+  },
+
   // === 页面导航 ===
   showPage(pageId) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -62,7 +179,10 @@ const App = {
   },
 
   goBack() {
-    if (this.currentPage === 'subject' || this.currentPage === 'wrong' || this.currentPage === 'stats') {
+    if (this.currentPage === 'daily') {
+      this.showPage('home');
+      this.renderHome();
+    } else if (this.currentPage === 'subject' || this.currentPage === 'wrong' || this.currentPage === 'stats') {
       this.showPage('home');
       this.renderHome();
     } else if (this.currentPage === 'quiz' || this.currentPage === 'memorize') {
@@ -109,10 +229,53 @@ const App = {
     }).join('');
 
     const rate = totalDone > 0 ? Math.round((totalCorrect / totalDone) * 100) : 0;
+
+    // 每日记忆进度
+    const dp = this.getDailyProgress();
+    const dpPct = dp.total > 0 ? Math.round(dp.done / dp.total * 100) : 0;
+
     document.getElementById('stats-overview').innerHTML = `
       <div class="stat-item"><div class="stat-num">${totalDone}</div><div class="stat-label">已做题数</div></div>
       <div class="stat-item"><div class="stat-num">${rate}%</div><div class="stat-label">正确率</div></div>
       <div class="stat-item"><div class="stat-num">${totalWrong}</div><div class="stat-label">错题数</div></div>`;
+
+    // 每日记忆入口（首页显眼位置）
+    const dailyEl = document.getElementById('daily-entrance');
+    if (dailyEl) {
+      const studyDay = this.getStudyDay();
+      const planSubjs = studyDay > 20 ? '查漏补缺' : (() => {
+        const PLAN_MAP = {
+          1: '英语', 2: '英语', 3: '英语',
+          4: '政治', 5: '政治', 6: '政治',
+          7: '语文', 8: '语文', 9: '语文', 10: '语文',
+          11: '数学', 12: '数学', 13: '数学', 14: '数学',
+          15: '物理', 16: '物理', 17: '物理',
+          18: '化学', 19: '化学', 20: '化学',
+        };
+        return PLAN_MAP[studyDay] || '英语';
+      })();
+      const isComplete = dp.done >= dp.total && dp.total > 0;
+      dailyEl.innerHTML = `
+        <div class="daily-card ${isComplete ? 'daily-complete' : ''}" onclick="App.startDaily()">
+          <div class="daily-card-left">
+            <div class="daily-card-icon">${isComplete ? '🎉' : '🧠'}</div>
+            <div class="daily-card-info">
+              <div class="daily-card-title">每日记忆 · 第${studyDay}天</div>
+              <div class="daily-card-sub">今日科目：${planSubjs} · 不重复刷题 · 自动追踪进度</div>
+            </div>
+          </div>
+          <div class="daily-card-right">
+            <div class="daily-progress-ring">
+              <svg viewBox="0 0 36 36" class="circular-chart">
+                <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path class="circle ${isComplete ? 'complete' : ''}" stroke-dasharray="${dpPct}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+              </svg>
+              <div class="daily-progress-text">${dpPct}%</div>
+            </div>
+            <div class="daily-stat">${dp.done}/${dp.total}题</div>
+          </div>
+        </div>`;
+    }
 
     // 渲染刷题计划
     this.renderPlan(subjectInfo);
@@ -120,7 +283,6 @@ const App = {
 
   renderPlan(subjectInfo) {
     // 20天计划，按科目难度分配天数
-    // 策略：容易得分的科目先刷，每科集中3-4天
     const PLAN = [
       { key: 'english',   name: '英语',   emoji: '🔤', days: 3, reason: '选择题为主，模式固定，提分最快' },
       { key: 'politics',  name: '政治',   emoji: '🏛️', days: 3, reason: '记忆型科目，背熟答案即可拿分' },
@@ -135,12 +297,10 @@ const App = {
 
     const today = this.getStudyDay();
     let currentDay = 1;
-    let currentSubject = '';
-    let highlightPhase = '';
 
     PLAN.forEach(p => {
       if (today >= currentDay && today < currentDay + p.days) {
-        highlightPhase = p.key;
+        // do nothing
       }
       currentDay += p.days;
     });
@@ -319,9 +479,21 @@ const App = {
       const labels = ['A', 'B', 'C', 'D'];
       let ansText = q.t === 'choice' ? labels[q.a] + '. ' + q.o[q.a] : q.a;
       html += `<div class="answer-show">✅ 正确答案：${this.escHtml(ansText)}</div>`;
-      html += `<div class="explanation">
-        <div class="explanation-title">💡 解析</div>
-        <div class="explanation-text">${this.escHtml(q.e)}</div></div>`;
+
+      // 错误答案提示（选择题）
+      if (q.t === 'choice') {
+        html += `<div class="wrong-options-show">
+          <div class="wrong-options-title">❌ 干扰项排除</div>`;
+        q.o.forEach((opt, i) => {
+          if (i !== q.a) {
+            html += `<div class="wrong-option-item"><span class="wrong-option-label">${labels[i]}</span> ${this.escHtml(opt)}</div>`;
+          }
+        });
+        html += `</div>`;
+      }
+
+      // 详细解析
+      html += this.renderDetailedExplanation(q);
 
       if (q.t === 'short') {
         html += `<div class="self-check-result">
@@ -414,7 +586,6 @@ const App = {
 
   setMemoScope(scope) {
     if (scope === 'all') {
-      // 全科随机
       let all = [];
       SUBJECT_KEYS.forEach(k => {
         const bank = this.getQuestionBank(k);
@@ -451,15 +622,29 @@ const App = {
       <span class="memo-subject-tag" data-subject="${subjKey}">${s.emoji} ${s.name}</span>
       <div class="memo-question">${this.memo.index + 1}/${total}. ${this.escHtml(q.q)}</div>
       <div class="memo-answer">
-        <div class="memo-answer-label">✅ 答案</div>
+        <div class="memo-answer-label">✅ 正确答案</div>
         <div class="memo-answer-text">${this.escHtml(ansText)}</div>
-      </div>
-      <div class="memo-explanation">
-        <div class="memo-explanation-label">💡 解析</div>
-        <div class="memo-explanation-text">${this.escHtml(q.e)}</div>
-      </div>
+      </div>`;
+
+    // 显示错误选项（选择题）
+    if (q.t === 'choice') {
+      html += `<div class="memo-wrong-options">
+        <div class="memo-wrong-title">❌ 错误选项（干扰项）</div>`;
+      q.o.forEach((opt, i) => {
+        if (i !== q.a) {
+          html += `<div class="memo-wrong-item"><span class="memo-wrong-label">${labels[i]}</span> ${this.escHtml(opt)}</div>`;
+        }
+      });
+      html += `</div>`;
+    }
+
+    // 详细解析
+    html += `<div class="memo-explanation">
+      <div class="memo-explanation-label">💡 解析</div>
+      <div class="memo-explanation-text">${this.escHtml(q.e)}</div>
     </div>`;
 
+    html += `</div>`;
     document.getElementById('memo-area').innerHTML = html;
   },
 
@@ -475,6 +660,224 @@ const App = {
   endMemorize() {
     this.showPage('subject');
     this.renderSubjectPage();
+  },
+
+  // === 每日记忆模式 ===
+  startDaily() {
+    const dp = this.getDailyProgress();
+    if (dp.done >= dp.total) {
+      this.showConfirm('今日任务已完成！\n要重新刷一套新的题目吗？', () => {
+        // 重置今日进度
+        const dd = this.getDailyData();
+        dd.todayDone = 0;
+        dd.todayCorrect = 0;
+        this.saveDailyData(dd);
+        this._initDaily();
+      });
+      return;
+    }
+    this._initDaily();
+  },
+
+  _initDaily() {
+    this.daily.questions = this.getDailyQuestions();
+    if (this.daily.questions.length === 0) {
+      this.showToast('今天没有需要刷的题目了，明天再来！');
+      return;
+    }
+    this.daily.index = 0;
+    this.daily.answeredMap = {};
+    this.showPage('daily');
+    this.renderDaily();
+  },
+
+  renderDaily() {
+    if (this.daily.questions.length === 0) {
+      document.getElementById('daily-area').innerHTML = '<div class="empty-state"><div class="empty-icon">🎉</div><div class="empty-text">今天没有新题目了！</div></div>';
+      return;
+    }
+
+    const q = this.daily.questions[this.daily.index];
+    const labels = ['A', 'B', 'C', 'D'];
+    const s = SUBJECTS[q._subject];
+    const total = this.daily.questions.length;
+    const dp = this.getDailyProgress();
+
+    document.getElementById('daily-progress').textContent = `${this.daily.index + 1}/${total}`;
+    document.getElementById('daily-stats').textContent = `今日：${dp.done}/${dp.total} · 正确${dp.correct || 0}`;
+
+    const typeName = q.t === 'choice' ? '选择题' : q.t === 'fill' ? '填空题' : '简答题';
+    const wrongTag = q._isWrong ? '<span style="color:#ea4335;margin-left:8px;font-size:12px;">⚠ 错题回顾</span>' : '';
+
+    let html = `<div class="question-card">
+      <span class="memo-subject-tag" data-subject="${q._subject}" style="margin-bottom:8px">${s.emoji} ${s.name}</span>
+      <span class="question-type" style="margin-left:8px">${typeName}${wrongTag}</span>
+      <div class="question-text">${this.daily.index + 1}. ${this.escHtml(q.q)}</div>`;
+
+    if (q.t === 'choice') {
+      html += `<div class="options" id="daily-options-area">`;
+      q.o.forEach((opt, i) => {
+        let cls = 'option-btn';
+        const rec = this.daily.answeredMap[this.daily.index];
+        if (rec) {
+          cls += ' disabled';
+          if (i === q.a) cls += ' correct';
+          else if (i === rec.selected && rec.selected !== q.a) cls += ' wrong';
+        }
+        html += `<button class="${cls}" onclick="App.selectDailyOption(${i})" data-idx="${i}">
+          <span class="option-label">${labels[i]}</span><span>${this.escHtml(opt)}</span></button>`;
+      });
+      html += `</div>`;
+    } else if (q.t === 'fill') {
+      const rec = this.daily.answeredMap[this.daily.index];
+      const val = rec ? rec.input : '';
+      const cls = rec ? (rec.correct ? 'correct' : 'wrong') : '';
+      html += `<input class="fill-input ${cls}" id="daily-fill-input" placeholder="请输入答案" value="${this.escHtml(val)}" ${rec ? 'readonly' : ''} onkeydown="if(event.key==='Enter')App.checkDailyFill()">
+        <div class="fill-actions">
+          <button class="btn btn-primary" onclick="App.checkDailyFill()" ${rec ? 'disabled' : ''}>提交答案</button>
+        </div>`;
+    } else {
+      const rec = this.daily.answeredMap[this.daily.index];
+      if (!rec) {
+        html += `<div class="short-answer-area">
+          <button class="btn btn-primary self-check-btn" onclick="App.showDailyShortAnswer()">查看答案</button></div>`;
+      }
+    }
+
+    // 答案和解析
+    const rec = this.daily.answeredMap[this.daily.index];
+    if (rec) {
+      let ansText = q.t === 'choice' ? labels[q.a] + '. ' + q.o[q.a] : q.a;
+      html += `<div class="answer-show">✅ 正确答案：${this.escHtml(ansText)}</div>`;
+
+      // 错误选项提示
+      if (q.t === 'choice') {
+        html += `<div class="wrong-options-show">
+          <div class="wrong-options-title">❌ 干扰项排除</div>`;
+        q.o.forEach((opt, i) => {
+          if (i !== q.a) {
+            html += `<div class="wrong-option-item"><span class="wrong-option-label">${labels[i]}</span> ${this.escHtml(opt)}</div>`;
+          }
+        });
+        html += `</div>`;
+      }
+
+      // 详细解析
+      html += this.renderDetailedExplanation(q);
+
+      if (q.t === 'short') {
+        html += `<div class="self-check-result">
+          <button class="btn ${rec.selfCorrect ? 'btn-primary' : 'btn-secondary'}" onclick="App.dailySelfCheck(true)">我答对了</button>
+          <button class="btn ${!rec.selfCorrect ? 'btn-danger' : 'btn-secondary'}" onclick="App.dailySelfCheck(false)">我没答对</button></div>`;
+      }
+    }
+
+    html += `</div>`;
+    document.getElementById('daily-area').innerHTML = html;
+
+    document.getElementById('daily-prev').disabled = this.daily.index === 0;
+    document.getElementById('daily-next').textContent = this.daily.index === total - 1 ? '完成今日任务' : '下一题';
+    document.getElementById('daily-next').disabled = false;
+  },
+
+  selectDailyOption(idx) {
+    if (this.daily.answeredMap[this.daily.index]) return;
+    const q = this.daily.questions[this.daily.index];
+    const isCorrect = idx === q.a;
+    this.daily.answeredMap[this.daily.index] = { selected: idx, correct: isCorrect };
+    this.recordDailyAnswer(q, isCorrect);
+    this.renderDaily();
+  },
+
+  checkDailyFill() {
+    if (this.daily.answeredMap[this.daily.index]) return;
+    const input = document.getElementById('daily-fill-input');
+    const userAns = input.value.trim();
+    if (!userAns) { this.showToast('请输入答案'); return; }
+    const q = this.daily.questions[this.daily.index];
+    const isCorrect = this.checkFillAnswer(userAns, q.a);
+    this.daily.answeredMap[this.daily.index] = { input: userAns, correct: isCorrect };
+    this.recordDailyAnswer(q, isCorrect);
+    this.renderDaily();
+  },
+
+  showDailyShortAnswer() {
+    this.daily.answeredMap[this.daily.index] = { selfCorrect: null };
+    this.renderDaily();
+  },
+
+  dailySelfCheck(isCorrect) {
+    const q = this.daily.questions[this.daily.index];
+    if (this.daily.answeredMap[this.daily.index]._recorded) return;
+    this.daily.answeredMap[this.daily.index].selfCorrect = isCorrect;
+    this.daily.answeredMap[this.daily.index]._recorded = true;
+    this.recordDailyAnswer(q, isCorrect);
+    this.renderDaily();
+  },
+
+  dailyPrev() {
+    if (this.daily.index > 0) { this.daily.index--; this.renderDaily(); }
+  },
+
+  dailyNext() {
+    const total = this.daily.questions.length;
+    if (this.daily.index < total - 1) {
+      this.daily.index++;
+      this.renderDaily();
+    } else {
+      this.endDaily();
+    }
+  },
+
+  endDaily() {
+    const dp = this.getDailyProgress();
+    const done = Object.keys(this.daily.answeredMap).length;
+    const correct = Object.values(this.daily.answeredMap).filter(r => r.correct !== false && r.selfCorrect !== false && (r.correct === true || r.selfCorrect === true)).length;
+    this.showToast(`今日任务完成！正确 ${correct}/${done} 题`);
+    this.showPage('home');
+    this.renderHome();
+  },
+
+  // === 详细解析生成器 ===
+  renderDetailedExplanation(q) {
+    let html = '';
+
+    if (q.t === 'choice') {
+      html += `<div class="explanation-detailed">
+        <div class="explanation-detailed-title">📖 详细解析</div>
+        <div class="explanation-detailed-text">${this.escHtml(q.e)}</div>
+        <div class="explanation-tips">
+          <div class="tip-item tip-key">🔑 知识要点</div>
+          <div class="tip-text">本题考查"${this.escHtml(q.q)}"的核心知识点。正确答案为正确选项所表述的内容，需要在理解的基础上记忆。考试中此类题目通常考查基础概念，务必准确掌握。</div>
+          <div class="tip-item tip-trap">⚠️ 易错提醒</div>
+          <div class="tip-text">注意区分干扰项与正确答案的细微差别。干扰项往往包含"正确但非最佳"的选项，或使用了容易混淆的近义词/概念。做题时要仔细审题，注意关键词。</div>
+        </div>
+      </div>`;
+    } else if (q.t === 'fill') {
+      html += `<div class="explanation-detailed">
+        <div class="explanation-detailed-title">📖 详细解析</div>
+        <div class="explanation-detailed-text">${this.escHtml(q.e)}</div>
+        <div class="explanation-tips">
+          <div class="tip-item tip-key">🔑 知识要点</div>
+          <div class="tip-text">本题需要准确填写答案，注意用词的精确性。高考填空题对答案的准确度要求较高，建议将标准答案完整记忆，不留模糊空间。</div>
+          <div class="tip-item tip-trap">⚠️ 易错提醒</div>
+          <div class="tip-text">填空题常见的失分原因包括：写错别字、漏字、用词不精确等。建议多写几遍加深记忆，确保考试时能准确写出。</div>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="explanation-detailed">
+        <div class="explanation-detailed-title">📖 参考答案</div>
+        <div class="explanation-detailed-text">${this.escHtml(q.e)}</div>
+        <div class="explanation-tips">
+          <div class="tip-item tip-key">🔑 答题要点</div>
+          <div class="tip-text">简答题要注意条理清晰、要点完整。建议按照"总分"结构作答：先给出概括性结论，再分点展开论述。高考阅卷是按要点给分的，尽量多写相关知识点。</div>
+          <div class="tip-item tip-trap">⚠️ 易错提醒</div>
+          <div class="tip-text">简答题常见失分原因：答非所问、要点不全、逻辑混乱、缺乏专业术语等。审清题目要求，用学科专业术语作答，避免口语化表达。</div>
+        </div>
+      </div>`;
+    }
+
+    return html;
   },
 
   // === 错题本 ===
@@ -497,6 +900,19 @@ const App = {
     const labels = ['A', 'B', 'C', 'D'];
     document.getElementById('wrong-area').innerHTML = wrongQs.map((q, i) => {
       let ansText = q.t === 'choice' ? labels[q.a] + '. ' + q.o[q.a] : q.a;
+
+      let optionsHtml = '';
+      if (q.t === 'choice') {
+        optionsHtml = `<div class="wrong-options-show">
+          <div class="wrong-options-title">❌ 干扰项排除</div>`;
+        q.o.forEach((opt, idx) => {
+          if (idx !== q.a) {
+            optionsHtml += `<div class="wrong-option-item"><span class="wrong-option-label">${labels[idx]}</span> ${this.escHtml(opt)}</div>`;
+          }
+        });
+        optionsHtml += `</div>`;
+      }
+
       return `<div class="wrong-item">
         <div class="wrong-item-header">
           <span class="question-type">${q.t === 'choice' ? '选择题' : q.t === 'fill' ? '填空题' : '简答题'}</span>
@@ -504,7 +920,8 @@ const App = {
         </div>
         <div class="question-text">${this.escHtml(q.q)}</div>
         <div class="answer-show" style="margin-top:12px">✅ ${this.escHtml(ansText)}</div>
-        <div class="explanation"><div class="explanation-text">${this.escHtml(q.e)}</div></div>
+        ${optionsHtml}
+        <div class="explanation"><div class="explanation-title">💡 解析</div><div class="explanation-text">${this.escHtml(q.e)}</div></div>
       </div>`;
     }).join('');
   },
